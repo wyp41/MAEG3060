@@ -77,24 +77,82 @@ def inverse_velocity_kinematics(q, v_desired):
 controller = RobotVelocityController("127.0.0.1")
 controller.start()
 
-# Parameters
-acceleration = 0.5
-dt = 1.0/500  # 2ms
+# Get initial TCP position (this will be the top of the circle where y is maximum)
+tcp_pose = controller.get_current_tcp_pose()
+x0, y0, z0 = tcp_pose[0], tcp_pose[1], tcp_pose[2]
+print(f"Starting position: x={x0:.4f}, y={y0:.4f}, z={z0:.4f}")
 
-# [vx, vy, vz, wx, wy, wz]
-v_desired = np.array([-0.1, 0.0, 0.0, 0.0, 0.0, 0.0])
+# Circle parameters
+radius = 0.05  # 5cm radius
+angular_velocity = 0.3  # rad/s (adjust for desired speed)
+kp = 2.0  # Proportional gain for error correction
 
-for i in range(500):    
+# Total duration for one complete circle
+duration = 2 * np.pi / angular_velocity
+
+print(f"Tracking circular trajectory with radius {radius}m")
+print(f"Angular velocity: {angular_velocity} rad/s")
+print(f"Duration: {duration:.2f} seconds")
+
+# Circle center is at (x0, y0 - radius, z0)
+# This makes current position the top of the circle (y maximum)
+cx = x0
+cy = y0 - radius
+cz = z0
+
+# Start time
+start_time = time()
+iteration = 0
+
+while True:
+    t = time() - start_time
+    
+    # Stop after one complete circle
+    if t >= duration:
+        break
+    
+    theta = angular_velocity * t
+    iteration += 1
+    
+    # Expected position on the circle
+    expected_x = cx + radius * np.sin(theta)
+    expected_y = cy + radius * np.cos(theta)
+    expected_z = cz
+
+    # Feedforward velocity (circular motion)
+    v_theory = np.array([radius * angular_velocity * np.cos(theta), -radius * angular_velocity * np.sin(theta), 0.0])
+    
+    # Get current TCP position
+    tcp_pose = controller.get_current_tcp_pose()
+    current_x, current_y, current_z = tcp_pose[0], tcp_pose[1], tcp_pose[2]
+    
+    # Position error
+    error_x = expected_x - current_x
+    error_y = expected_y - current_y
+    error = [error_x, error_y, 0.0]
+    
+    v_modified = v_theory + kp * np.array(error)
+    
+    v_desired = np.array([v_modified[0], v_modified[1], v_modified[2], 0.0, 0.0, 0.0])
+    
+    # Get current joint angles
     q_current = controller.get_current_q()
     
+    # Calculate joint velocities using inverse velocity kinematics
     q_dot = inverse_velocity_kinematics(q_current, v_desired)
     
+    # Send velocity command
     controller.speedJ(q_dot.tolist())
     
-    if i % 100 == 0:
+    # Print progress every 100 iterations
+    if iteration % 100 == 0:
         tcp_pose = controller.get_current_tcp_pose()
-        print(f"Iteration {i}, TCP position: [{tcp_pose[0]:.4f}, {tcp_pose[1]:.4f}, {tcp_pose[2]:.4f}]")
+        expected_x = cx + radius * np.sin(theta)
+        expected_y = cy + radius * np.cos(theta)
+        error = np.sqrt((tcp_pose[0] - expected_x)**2 + (tcp_pose[1] - expected_y)**2)
+        print(f"t={t:.2f}s, Iteration {iteration}, TCP: [{tcp_pose[0]:.4f}, {tcp_pose[1]:.4f}, {tcp_pose[2]:.4f}], "
+              f"Expected: [{expected_x:.4f}, {expected_y:.4f}, {cz:.4f}], Error: {error:.4f}m")
 
-print("Control complete, stopping robot")
+print("Circle tracking complete, stopping robot")
 controller.stop()
 controller.close()
