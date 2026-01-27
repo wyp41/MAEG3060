@@ -6,7 +6,6 @@ import socket
 import json
 import time
 import threading
-import numpy as np
 
 class RobotVelocityController:    
     def __init__(self, server_ip="172.168.0.100", server_port=5005):
@@ -23,11 +22,8 @@ class RobotVelocityController:
     def send_velocity(self, qdot):
         try:
             if not isinstance(qdot, list):
-                try:
-                    qdot = qdot.tolist()
-                except:
-                    print("Error: qdot must be a list")
-                    return False
+                print("Error: qdot must be a list")
+                return False
             
             if len(qdot) != 6:
                 print(f"Error: qdot must have 6 elements, got {len(qdot)}")
