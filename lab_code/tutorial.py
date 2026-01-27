@@ -1,4 +1,6 @@
+import time
 from controller import RobotVelocityController
+import numpy as np
 
 if __name__ == "__main__":
     controller = RobotVelocityController("127.0.0.1")
@@ -7,7 +9,7 @@ if __name__ == "__main__":
     # Send joint velocity commands without blocking
     # Command is sent at 125Hz
     for i in range(500):
-        controller.speedJ([-0.1, 0, 0, 0, 0, 0])
+        controller.speedJ(np.array([0.1, 0, 0, 0, 0, 0]))
 
         # Get and print current joint angles and TCP pose
         q = controller.get_current_q()

@@ -7,9 +7,11 @@ import json
 import time
 import threading
 import numpy as np
+from UR_server import URControllerProcess
 
 class RobotVelocityController:    
     def __init__(self, server_ip="172.168.0.100", server_port=5005):
+        self.UR_Proc = URControllerProcess(auto_start=False)
         self.server_ip = server_ip
         self.server_port = server_port
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -68,6 +70,7 @@ class RobotVelocityController:
         return self.send_velocity([0, 0, 0, 0, 0, 0])
     
     def close(self):
+        self.UR_Proc.stop()
         self.stop()
         self.running = False
         self.thread.join()
