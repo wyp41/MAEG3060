@@ -2,6 +2,7 @@
 Please never modify this file directly.
 '''
 
+from collections import deque
 import socket
 import json
 import time
@@ -10,8 +11,8 @@ import numpy as np
 from UR_server import URControllerProcess
 
 class RobotVelocityController:    
-    def __init__(self, server_ip="172.168.0.100", server_port=5005):
-        self.UR_Proc = URControllerProcess(auto_start=False)
+    def __init__(self, server_ip="172.168.0.100", server_port=5005, direct_connect=False):
+        self.UR_Proc = URControllerProcess(auto_start=direct_connect)
         self.server_ip = server_ip
         self.server_port = server_port
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -104,3 +105,71 @@ class RobotVelocityController:
         if duration > 0:
             print("\nStopping robot...")
             self.stop()
+    
+    def draw_trajectory(self, target_speed, target_pos, t):
+        """Visualize the trajectory."""
+        import matplotlib.pyplot as plt
+
+        # Lazy init for interactive plotting (keeps state across calls)
+        if not hasattr(self, "_traj_init"):
+            plt.ion()
+            self._traj_t = deque(maxlen=2000)
+            self._traj_pos = [deque(maxlen=2000) for _ in range(6)]
+            self._traj_spd = [deque(maxlen=2000) for _ in range(6)]
+
+            self._traj_fig, (self._traj_ax1, self._traj_ax2) = plt.subplots(2, 1, sharex=True, figsize=(10, 8))
+            self._traj_line_pos = []
+            self._traj_line_spd = []
+            colors = ['b', 'g', 'r', 'c', 'm', 'y']
+            labels = ['Joint 1', 'Joint 2', 'Joint 3', 'Joint 4', 'Joint 5', 'Joint 6']
+            
+            for i in range(6):
+                line_pos, = self._traj_ax1.plot([], [], color=colors[i], label=labels[i])
+                line_spd, = self._traj_ax2.plot([], [], color=colors[i], label=labels[i])
+                self._traj_line_pos.append(line_pos)
+                self._traj_line_spd.append(line_spd)
+            
+            self._traj_ax1.set_ylabel("target_pos")
+            self._traj_ax2.set_ylabel("target_speed")
+            self._traj_ax2.set_xlabel("t (s)")
+            self._traj_ax1.grid(True)
+            self._traj_ax2.grid(True)
+            self._traj_ax1.legend(loc='upper right', fontsize=8)
+            self._traj_ax2.legend(loc='upper right', fontsize=8)
+
+            self._traj_init = True
+
+        # Append latest samples
+        t_now = t
+        self._traj_t.append(t_now)
+        
+        target_pos_arr = np.asarray(target_pos).flatten()
+        target_speed_arr = np.asarray(target_speed).flatten()
+        
+        for i in range(6):
+            self._traj_pos[i].append(float(target_pos_arr[i]))
+            self._traj_spd[i].append(float(target_speed_arr[i]))
+
+        # Update plot
+        x = np.fromiter(self._traj_t, dtype=float)
+        
+        for i in range(6):
+            y_pos = np.fromiter(self._traj_pos[i], dtype=float)
+            y_spd = np.fromiter(self._traj_spd[i], dtype=float)
+            self._traj_line_pos[i].set_data(x, y_pos)
+            self._traj_line_spd[i].set_data(x, y_spd)
+
+        self._traj_ax1.relim()
+        self._traj_ax1.autoscale_view()
+        self._traj_ax2.relim()
+        self._traj_ax2.autoscale_view()
+
+        self._traj_fig.canvas.draw_idle()
+        plt.pause(0.001)
+    
+    def keep_plot_open(self):
+        """Keep the trajectory plot open after execution."""
+        import matplotlib.pyplot as plt
+        if hasattr(self, "_traj_init"):
+            plt.ioff()
+            plt.show()
