@@ -116,7 +116,9 @@ def execute_trajectory(controller, start, end, duration, traj_type = 'linear'):
     print("Elapsed time:", time.time() - start_t)
 
 if __name__ == "__main__":
-    controller = RobotVelocityController()
+    server_ip = "127.0.0.1"
+    direct_connect = True
+    controller = RobotVelocityController(server_ip=server_ip, direct_connect=direct_connect)
     controller.start()
 
     P0 = np.array([0, -90, 0, -90, 0, 0])
@@ -125,14 +127,14 @@ if __name__ == "__main__":
     start = np.deg2rad(P0)
     end = np.deg2rad(P1)
 
-    execute_trajectory(controller, start=start, end=end, duration=20.0, traj_type='cubic')
+    execute_trajectory(controller, start=start, end=end, duration=20.0, traj_type='linear')
 
     time.sleep(5)
 
     start = np.deg2rad(P1)
     end = np.deg2rad(P0)
 
-    execute_trajectory(controller, start=start, end=end, duration=20.0, traj_type='cubic')
+    execute_trajectory(controller, start=start, end=end, duration=20.0, traj_type='linear')
     
     # Stop the robot
     controller.stop()
