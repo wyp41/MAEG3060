@@ -2,7 +2,27 @@ import time
 from controller import RobotVelocityController
 import numpy as np
 
-# Please implement average_velocity and zero_velocity functions here
+# Please implement zero_velocity and average_velocity functions here
+
+def zero_velocity(point_list, duration_list, joint_num = 6):
+    """
+    Generate zero velocities at all waypoints for trajectory planning.
+    
+    Functionality:
+        Creates a list of zero velocity vectors for each waypoint, ensuring the robot
+        comes to a complete stop at each intermediate position. This results in a
+        stop-and-go motion pattern.
+    
+    Input:
+        point_list (list of np.ndarray): List of joint positions (waypoints) in radians
+        duration_list (list of float): List of durations for each segment (seconds)
+        joint_num (int): Number of joints (default: 6)
+    
+    Output:
+        speed_list (list of np.ndarray): List of zero velocity vectors at each waypoint (joint_num dimensions each)
+    """
+    
+    return speed_list
 
 def average_velocity(point_list, duration_list, joint_num = 6):
     """
@@ -44,27 +64,6 @@ def average_velocity(point_list, duration_list, joint_num = 6):
 
     # Add zero velocity at the ending point
     speed_list.append(np.zeros(joint_num))
-    return speed_list
-
-        
-def zero_velocity(point_list, duration_list, joint_num = 6):
-    """
-    Generate zero velocities at all waypoints for trajectory planning.
-    
-    Functionality:
-        Creates a list of zero velocity vectors for each waypoint, ensuring the robot
-        comes to a complete stop at each intermediate position. This results in a
-        stop-and-go motion pattern.
-    
-    Input:
-        point_list (list of np.ndarray): List of joint positions (waypoints) in radians
-        duration_list (list of float): List of durations for each segment (seconds)
-        joint_num (int): Number of joints (default: 6)
-    
-    Output:
-        speed_list (list of np.ndarray): List of zero velocity vectors at each waypoint (joint_num dimensions each)
-    """
-    
     return speed_list
 
 def compute_cubic_coeffs(start, end, start_speed, end_speed, duration):
