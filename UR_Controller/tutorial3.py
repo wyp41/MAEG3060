@@ -52,8 +52,8 @@ def average_velocity(point_list, duration_list, joint_num = 6):
         point1 = point_list[i-1]
         point2 = point_list[i]
         point3 = point_list[i+1]
-        duration1 = duration_list[i-1]
-        duration2 = duration_list[i]
+        duration1 = duration_list[i-1] - duration_list[i-2] if i > 1 else duration_list[i-1]
+        duration2 = duration_list[i] - duration_list[i-1]
 
         # Calculate velocities for the two adjacent segments
         # Check if velocities have the same direction (positive product means same direction)
