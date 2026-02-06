@@ -204,6 +204,7 @@ def _child_main(config: URControllerConfig, stop_event: mp.synchronize.Event) ->
 
                 if active_client is None:
                     active_client = addr
+                    last_received_time = current_time
                     print(f"New client connected: {addr}")
                 elif active_client != addr:
                     print(f"Rejected connection from {addr} - Client {active_client} is already connected")

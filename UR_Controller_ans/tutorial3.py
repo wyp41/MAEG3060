@@ -253,7 +253,7 @@ if __name__ == "__main__":
     point_list = [np.deg2rad(P0), np.deg2rad(P1), np.deg2rad(P2), np.deg2rad(P1), np.deg2rad(P0)]
     duration_list = [10.0, 20.0, 30.0, 40.0]
 
-    execute_trajectory(controller, point_list=point_list, duration_list=duration_list, traj_type="cubic", interm_type="zero_velocity")
+    execute_trajectory(controller, point_list=point_list, duration_list=duration_list, traj_type="cubic", interm_type="average_velocity")
     
     # Stop the robot
     controller.stop()
