@@ -52,8 +52,8 @@ def average_velocity(point_list, duration_list, joint_num = 6):
         point1 = point_list[i-1]
         point2 = point_list[i]
         point3 = point_list[i+1]
-        duration1 = duration_list[i-1]
-        duration2 = duration_list[i]
+        duration1 = duration_list[i-1] - duration_list[i-2] if i > 1 else duration_list[i-1]
+        duration2 = duration_list[i] - duration_list[i-1]
 
         # Calculate velocities for the two adjacent segments
         speed1 = (point2 - point1) / duration1
@@ -169,6 +169,72 @@ def cubic_trajectory(coeffs, t):
     
     return target_pos, target_speed
 
+def parabolic_blend_coeffs(start, end, duration, t_b = None, acceleration = None):
+    """
+    Compute parabolic blend coefficients for trajectory planning.
+    
+    Functionality:
+        Calculates the coefficients for a parabolic blend trajectory that smoothly
+        transitions between two linear segments. The blend occurs over a specified
+        time t_b, and the total duration of the trajectory is given by duration.
+    """
+    if t_b is not None:
+        if np.any(t_b >= duration / 2):
+            print("Blend time t_b must be less than half of the total duration.")
+            return None, None
+        acceleration = (start - end) / (t_b**2 - duration*t_b)
+    elif acceleration is not None:
+        if np.any(duration**2 * acceleration**2 - 4*(end - start)*acceleration < 0):
+            print("Acceleration is too low for the given duration and distance.")
+            return None, None
+        t_b = (duration - abs(np.sqrt(acceleration**2 * duration**2 - 4*(end - start)*acceleration)/acceleration)) / 2
+    else:
+        print("Either t_b or acceleration must be provided.")
+        return None, None
+    return t_b, acceleration
+
+def parabolic_blend_trajectory(start, end, t, duration, t_b = None, acceleration = None):
+    """
+    Generate a parabolic blend trajectory from start to end over time duration.
+    
+    Functionality:
+        Computes the position and velocity for a parabolic blend trajectory at time t.
+        The trajectory consists of three phases: acceleration, constant velocity,
+        and deceleration.
+
+    Input:
+        start (np.ndarray): Starting joint positions (6 dimensions)
+        end (np.ndarray): Ending joint positions (6 dimensions)
+        t (float): Current time elapsed since trajectory start (seconds)
+        duration (float): Total duration of the trajectory (seconds)
+        t_b (float): Blend time for acceleration and deceleration phases (seconds)
+        acceleration (float): Acceleration magnitude for the blend phase (if t_b is not provided)
+    """
+    t_b, acceleration = parabolic_blend_coeffs(start, end, duration, t_b, acceleration)
+    if t_b is None or acceleration is None:
+        print("Failed to compute parabolic blend coefficients.")
+        return np.zeros_like(start), np.zeros_like(start)
+
+    target_pos = np.zeros_like(start)
+    target_speed = np.zeros_like(start)
+    for i in range(6):
+        if t < t_b[i]:
+            target_pos[i] = start[i] + 0.5 * acceleration[i] * t**2
+            target_speed[i] = acceleration[i] * t
+        elif t < duration - t_b[i]:
+            target_pos[i] = start[i] + acceleration[i] * t_b[i] * (t - t_b[i]/2)
+            target_speed[i] = acceleration[i] * t_b[i]
+        elif t <= duration:
+            dt = duration - t
+            target_pos[i] = end[i] - 0.5 * acceleration[i] * dt**2
+            target_speed[i] = acceleration[i] * dt
+        else:
+            target_pos[i] = end[i]
+            target_speed[i] = 0
+
+    return target_pos, target_speed
+
+
 def linear_trajectory(start, end, t, duration):
     """
     Generate a linear trajectory from start to end over time duration.
@@ -191,7 +257,7 @@ def linear_trajectory(start, end, t, duration):
     target_speed = (end - start) / duration
     return target_pos,target_speed
 
-def execute_trajectory(controller, point_list, duration_list, traj_type = 'cubic', interm_type="average_velocity"):
+def execute_trajectory(controller, point_list, duration_list, traj_type = 'cubic', interm_type="average_velocity", acceleration=None, t_b=None):
     """
     Execute a trajectory using the given robot controller.
     
@@ -213,6 +279,11 @@ def execute_trajectory(controller, point_list, duration_list, traj_type = 'cubic
     if traj_type == 'cubic':
         coeffs_list = multiple_cubic_coeffs(point_list, duration_list, interm_type=interm_type)
     
+    target_speed = [0,0,0,0,0,0]
+    target_pos = point_list[0]
+    t = 0
+    controller.draw_trajectory(target_speed, target_pos, t)
+    
     start_t = time.time()
     try:
         while time.time() - start_t < duration_list[-1]:
@@ -233,6 +304,8 @@ def execute_trajectory(controller, point_list, duration_list, traj_type = 'cubic
             elif traj_type == 'cubic':
                 cubic_coeffs = coeffs_list[stage]
                 target_pos, target_speed = cubic_trajectory(cubic_coeffs, stage_t)
+            elif traj_type == 'parabolic_blend':
+                target_pos, target_speed = parabolic_blend_trajectory(point_list[stage], point_list[stage+1], stage_t, stage_duration, t_b=t_b, acceleration=acceleration)
             
             controller.draw_trajectory(target_speed, target_pos, t)
             controller.speedJ(target_speed)
@@ -248,12 +321,22 @@ if __name__ == "__main__":
 
     P0 = np.array([0, -90, 0, -90, 0, 0])
     P1 = np.array([90, -60, 60, -90, -90, 0])
-    P2 = np.array([120, -90, 90, -45, -90, 0])
 
-    point_list = [np.deg2rad(P0), np.deg2rad(P1), np.deg2rad(P2), np.deg2rad(P1), np.deg2rad(P0)]
-    duration_list = [10.0, 20.0, 30.0, 40.0]
+    point_list = [np.deg2rad(P0), np.deg2rad(P1)]
+    duration_list = [10.0]
 
-    execute_trajectory(controller, point_list=point_list, duration_list=duration_list, traj_type="cubic", interm_type="average_velocity")
+    acceleration = np.array([0.1, 0.1, 0.1, 0.1, -0.1, 0.1])
+    t_b = None
+
+    execute_trajectory(controller, point_list=point_list, duration_list=duration_list, traj_type="parabolic_blend", acceleration=acceleration, t_b=t_b)
+
+    point_list = [np.deg2rad(P1), np.deg2rad(P0)]
+    duration_list = [10.0]
+
+    acceleration = None
+    t_b = np.array([2.0] * 6)
+
+    execute_trajectory(controller, point_list=point_list, duration_list=duration_list, traj_type="parabolic_blend", acceleration=acceleration, t_b=t_b)
     
     # Stop the robot
     controller.stop()
