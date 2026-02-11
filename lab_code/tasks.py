@@ -75,24 +75,50 @@ def inverse_velocity_kinematics(q, v_desired):
     
     return q_dot
 
-def pointing_vector_to_angle_axis(pointing_vector1, pointing_vector2):
+def rotation_matrix_to_angle_axis(R):
+    """Convert rotation matrix to angle-axis representation"""
+    cos_angle = (np.trace(R) - 1) / 2
+    cos_angle = np.clip(cos_angle, -1.0, 1.0)
+    angle = np.arccos(cos_angle)
+    
+    if angle < 1e-6:
+        return np.zeros(3)
+    
+    # Calculate rotation axis from rotation matrix
+    axis = np.array([
+        R[2, 1] - R[1, 2],
+        R[0, 2] - R[2, 0],
+        R[1, 0] - R[0, 1]
+    ]) / (2 * np.sin(angle))
+    
+    return angle * axis
+
+def pointing_vector_to_angle_axis(pointing_vector1, pointing_vector2, x_direction1, x_direction2):
+    """Calculate angle-axis representation from pointing vectors and x-directions"""
+    # Normalize z-axes (pointing vectors)
     z_axis1 = pointing_vector1 / np.linalg.norm(pointing_vector1)
     z_axis2 = pointing_vector2 / np.linalg.norm(pointing_vector2)
     
-    # Calculate the angle between the two vectors
-    cos_angle = np.clip(np.dot(z_axis1, z_axis2), -1.0, 1.0)
-    angle = np.arccos(cos_angle)
+    # Construct x-axes by orthogonalizing x_direction with respect to z_axis
+    x_temp1 = x_direction1 - np.dot(x_direction1, z_axis1) * z_axis1
+    x_axis1 = x_temp1 / np.linalg.norm(x_temp1)
     
-    # Calculate the rotation axis (cross product)
-    rotation_axis = np.cross(z_axis1, z_axis2)
+    x_temp2 = x_direction2 - np.dot(x_direction2, z_axis2) * z_axis2
+    x_axis2 = x_temp2 / np.linalg.norm(x_temp2)
     
-    if np.linalg.norm(rotation_axis) < 1e-6:
-        return np.zeros(3)  # No rotation needed
+    # y-axes are cross products of z and x
+    y_axis1 = np.cross(z_axis1, x_axis1)
+    y_axis2 = np.cross(z_axis2, x_axis2)
     
-    rotation_axis /= np.linalg.norm(rotation_axis)  # Normalize the rotation axis
+    # Construct rotation matrices [x, y, z] as columns
+    R1 = np.column_stack((x_axis1, y_axis1, z_axis1))
+    R2 = np.column_stack((x_axis2, y_axis2, z_axis2))
     
-    # Angle-axis representation is the angle multiplied by the rotation axis
-    angle_axis = angle * rotation_axis
+    # Calculate relative rotation from frame 1 to frame 2
+    R_rel = R2 @ R1.T
+    
+    # Convert rotation matrix to angle-axis representation
+    angle_axis = rotation_matrix_to_angle_axis(R_rel)
     
     return angle_axis
 
@@ -136,17 +162,21 @@ if __name__ == "__main__":
         [-0.699867,-0.351211,-0.621962],
         [0, 0, -1]])
     
-    # x_directions = np.array([[-0.284142,-0.909255,0.304168],
-    #     [0.074018,-0.955504,0.285539],
-    #     [0.979293,0.191109,0.066806],
-    #     [0.826,-0.505294,0.249803],
-    #     [-0.32551,-0.600535,0.730343],
-    #     [-0.470729,-0.428122,0.771444]])
+    x_directions = np.array([[1, 0, 0],
+        [0.074018,-0.955504,0.285539],
+        [0.979293,0.191109,0.066806],
+        [0.826,-0.505294,0.249803],
+        [-0.32551,-0.600535,0.730343],
+        [-0.470729,-0.428122,0.771444],
+        [1, 0, 0]])
 
     angle_axis_list = []
 
     for i in range(len(pointing_vectors)-1):
-        delta_angle_axis = pointing_vector_to_angle_axis(pointing_vectors[i], pointing_vectors[i+1])      
+        delta_angle_axis = pointing_vector_to_angle_axis(
+            pointing_vectors[i], pointing_vectors[i+1],
+            x_directions[i], x_directions[i+1]
+        )      
         angle_axis_list.append(delta_angle_axis)
 
     print("Angle-axis list:", angle_axis_list)
@@ -176,7 +206,7 @@ if __name__ == "__main__":
             target_pos, target_speed = cubic_trajectory(cubic_coeffs, stage_t)
 
             w_desired = target_speed[3] * angle_axis_list[stage]
-            print("w_desired:", w_desired)
+            # print("w_desired:", w_desired)
 
             v_desired = target_speed[:3]
 
