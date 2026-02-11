@@ -3,6 +3,10 @@ from controller import RobotVelocityController
 import numpy as np
 from tutorial3 import *
 
+'''
+Please implement the parabolic blend coeffs and trajectory functions
+'''
+
 def parabolic_blend_coeffs(start, end, duration, t_b = None, acceleration = None):
     """
     Compute parabolic blend coefficients for trajectory planning.

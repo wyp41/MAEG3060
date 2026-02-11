@@ -1,6 +1,7 @@
 from time import time
 from controller import RobotVelocityController
 import numpy as np
+from tutorial3 import *
 
 a = [0, 0, 0.24365, 0.21325, 0, 0]
 d = [0.1519, 0, 0, 0.11235, 0.08535, 0.0819]
@@ -75,27 +76,41 @@ def inverse_velocity_kinematics(q, v_desired):
     
     return q_dot
 
-def pointing_vector_to_rotation_matrix(pointing_vector):
-    z_axis = pointing_vector / np.linalg.norm(pointing_vector)
-    x_axis = np.cross(np.array([0, 0, 1]), z_axis)
-    if np.linalg.norm(x_axis) < 1e-6:
-        x_axis = np.array([1, 0, 0])  # Handle singularity when pointing straight up
-    else:
-        x_axis /= np.linalg.norm(x_axis)
-    y_axis = np.cross(z_axis, x_axis)
+def pointing_vector_to_angle_axis(pointing_vector1, pointing_vector2):
+    z_axis1 = pointing_vector1 / np.linalg.norm(pointing_vector1)
+    z_axis2 = pointing_vector2 / np.linalg.norm(pointing_vector2)
     
-    R = np.eye(4)
-    R[:3, 0] = x_axis
-    R[:3, 1] = y_axis
-    R[:3, 2] = z_axis
-    return R
+    # Calculate the angle between the two vectors
+    cos_angle = np.clip(np.dot(z_axis1, z_axis2), -1.0, 1.0)
+    angle = np.arccos(cos_angle)
+    
+    # Calculate the rotation axis (cross product)
+    rotation_axis = np.cross(z_axis1, z_axis2)
+    
+    if np.linalg.norm(rotation_axis) < 1e-6:
+        return np.zeros(3)  # No rotation needed
+    
+    rotation_axis /= np.linalg.norm(rotation_axis)  # Normalize the rotation axis
+    
+    # Angle-axis representation is the angle multiplied by the rotation axis
+    angle_axis = angle * rotation_axis
+    
+    return angle_axis
 
-def target_angular_velocity(pointing_vector, pointing_vector_dot):
-    z_axis = pointing_vector / np.linalg.norm(pointing_vector)
-    z_dot = pointing_vector_dot / np.linalg.norm(pointing_vector) - (pointing_vector @ pointing_vector_dot) * z_axis / np.linalg.norm(pointing_vector)**2
-    angular_velocity = np.cross(z_axis, z_dot)
+def angular_velocity_from_pointing_vector(pointing_vector1, pointing_vector2, dt):
+    angle_axis = pointing_vector_to_angle_axis(pointing_vector1, pointing_vector2)
+    angle = np.linalg.norm(angle_axis)
+    
+    if angle < 1e-6:
+        return np.zeros(3)  # No rotation needed
+    
+    rotation_axis = angle_axis / angle  # Normalize the rotation axis
+    
+    # Angular velocity is the angle divided by time, along the rotation axis
+    angular_velocity = (angle / dt) * rotation_axis
     
     return angular_velocity
+    
 
 controller = RobotVelocityController("127.0.0.1", direct_connect=True)
 controller.start()
@@ -103,60 +118,38 @@ controller.start()
 # Get initial TCP position (this will be the top of the circle where y is maximum)
 tcp_pose = controller.get_current_tcp_pose()
 x0, y0, z0 = tcp_pose[0], tcp_pose[1], tcp_pose[2]
+
+# Get current angle-axis from TCP pose (rx, ry, rz)
+angle_axis = np.array([tcp_pose[3], tcp_pose[4], tcp_pose[5]])
+pointing_vector = angle_axis  # Initial pointing vector
 print(f"Starting position: x={x0:.4f}, y={y0:.4f}, z={z0:.4f}")
+print(f"Starting angle-axis: rx={angle_axis[0]:.4f}, ry={angle_axis[1]:.4f}, rz={angle_axis[2]:.4f}")
 
-# Circle parameters
-radius = 0.05  # 5cm radius
-angular_velocity = 0.3  # rad/s (adjust for desired speed)
-kp = 2.0  # Proportional gain for error correction
+target_position = np.array([x0, y0, z0-0.2])  # Move down by 20cm
+target_pointing_vector = np.array([0, 0, -1])  # Pointing straight down
+angle_axis_target = pointing_vector_to_angle_axis(pointing_vector, target_pointing_vector)
+target_pose = np.concatenate((target_position, angle_axis_target))
 
-# Total duration for one complete circle
-duration = 2 * np.pi / angular_velocity
+duration_list = [10.0]  # seconds
 
-print(f"Tracking circular trajectory with radius {radius}m")
-print(f"Angular velocity: {angular_velocity} rad/s")
-print(f"Duration: {duration:.2f} seconds")
+point_list = [np.array([x0, y0, z0, 0, 0, 0], target_pose)]
+coeffs_list = multiple_cubic_coeffs(point_list, duration_list, interm_type="zero_velocity")
 
-# Circle center is at (x0, y0 - radius, z0)
-# This makes current position the top of the circle (y maximum)
-cx = x0
-cy = y0 - radius
-cz = z0
-
-# Start time
 start_time = time()
-iteration = 0
 
 while True:
     t = time() - start_time
     
     # Stop after one complete circle
-    if t >= duration:
+    if t >= duration_list[-1]:
         break
-    
-    theta = angular_velocity * t
-    iteration += 1
-    
-    # Expected position on the circle
-    expected_x = cx + radius * np.sin(theta)
-    expected_y = cy + radius * np.cos(theta)
-    expected_z = cz
-
-    # Feedforward velocity (circular motion)
-    v_theory = np.array([radius * angular_velocity * np.cos(theta), -radius * angular_velocity * np.sin(theta), 0.0])
+    cubic_coeffs = coeffs_list[0]
+    target_pos, target_speed = cubic_trajectory(cubic_coeffs, t)
+    v_desired = target_speed
     
     # Get current TCP position
     tcp_pose = controller.get_current_tcp_pose()
     current_x, current_y, current_z = tcp_pose[0], tcp_pose[1], tcp_pose[2]
-    
-    # Position error
-    error_x = expected_x - current_x
-    error_y = expected_y - current_y
-    error = [error_x, error_y, 0.0]
-    
-    v_modified = v_theory + kp * np.array(error)
-    
-    v_desired = np.array([v_modified[0], v_modified[1], v_modified[2], 0.0, 0.0, 0.0])
     
     # Get current joint angles
     q_current = controller.get_current_q()
@@ -166,15 +159,6 @@ while True:
     
     # Send velocity command
     controller.speedJ(q_dot.tolist())
-    
-    # Print progress every 100 iterations
-    if iteration % 100 == 0:
-        tcp_pose = controller.get_current_tcp_pose()
-        expected_x = cx + radius * np.sin(theta)
-        expected_y = cy + radius * np.cos(theta)
-        error = np.sqrt((tcp_pose[0] - expected_x)**2 + (tcp_pose[1] - expected_y)**2)
-        print(f"t={t:.2f}s, Iteration {iteration}, TCP: [{tcp_pose[0]:.4f}, {tcp_pose[1]:.4f}, {tcp_pose[2]:.4f}], "
-              f"Expected: [{expected_x:.4f}, {expected_y:.4f}, {cz:.4f}], Error: {error:.4f}m")
 
 print("Circle tracking complete, stopping robot")
 controller.stop()
