@@ -18,7 +18,8 @@ class URControllerConfig:
     udp_port: int = 5005
 
     # Robot Configuration
-    robot_ip: str = "192.168.50.168"
+    # robot_ip: str = "192.168.50.168"
+    robot_ip: str = "192.168.0.100"
     acceleration: float = 40.0
     hz: float = 125.0
 

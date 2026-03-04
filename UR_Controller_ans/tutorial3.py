@@ -128,9 +128,9 @@ def multiple_cubic_coeffs(point_list, duration_list, interm_type="average_veloci
     """
     N = len(point_list)
     if interm_type == "average_velocity":
-        speed_list = average_velocity(point_list, duration_list)
+        speed_list = average_velocity(point_list, duration_list, joint_num=len(point_list[0]))
     elif interm_type == "zero_velocity":
-        speed_list = zero_velocity(point_list, duration_list)
+        speed_list = zero_velocity(point_list, duration_list, joint_num=len(point_list[0]))
         
     coeffs_list = []
     for i in range(N-1):
