@@ -18,9 +18,10 @@ class URControllerConfig:
     udp_port: int = 5005
 
     # Robot Configuration
-    # robot_ip: str = "192.168.50.168"
-    robot_ip: str = "192.168.0.100"
+    robot_ip: str = "192.168.50.168"
+    # robot_ip: str = "192.168.0.100"
     acceleration: float = 40.0
+    speedl_acceleration: float = 1.2
     hz: float = 125.0
 
     # Client Connection Management
@@ -28,6 +29,9 @@ class URControllerConfig:
 
     # Joint velocity clamp (rad/s)
     qdot_limit: float = math.pi
+
+    # TCP speed clamp for speedL [vx, vy, vz, rx, ry, rz]
+    tcp_speed_limit: float = 1.0
 
     # UDP socket recv timeout; keep smaller than dt
     socket_timeout_s: float = 0.01
@@ -157,10 +161,12 @@ def _child_main(config: URControllerConfig, stop_event: mp.synchronize.Event) ->
 
     dt = 1.0 / float(config.hz)
     q_range = (-float(config.qdot_limit), float(config.qdot_limit))
+    tcp_speed_range = (-float(config.tcp_speed_limit), float(config.tcp_speed_limit))
 
     active_client: Optional[Tuple[str, int]] = None
     last_received_time: Optional[float] = None
-    qdot = [0.0] * 6
+    cmd = [0.0] * 6
+    mode = "speedJ"
 
     print(f"Connecting to robot at {config.robot_ip}...")
     try:
@@ -197,7 +203,8 @@ def _child_main(config: URControllerConfig, stop_event: mp.synchronize.Event) ->
                     print(f"Client {active_client} timed out, releasing connection")
                     active_client = None
                     last_received_time = None
-                    qdot = [0.0] * 6
+                    cmd = [0.0] * 6
+                    mode = "speedJ"
 
             # UDP receive
             try:
@@ -210,10 +217,25 @@ def _child_main(config: URControllerConfig, stop_event: mp.synchronize.Event) ->
                 elif active_client != addr:
                     print(f"Rejected connection from {addr} - Client {active_client} is already connected")
                 else:
-                    received_qdot = json.loads(data.decode("utf-8"))
-                    if isinstance(received_qdot, list) and len(received_qdot) == 6:
-                        qdot = received_qdot
+                    payload = json.loads(data.decode("utf-8"))
+
+                    # Backward compatible format:
+                    # 1) Legacy speedJ: [qd1, ... qd6]
+                    # 2) New mode packet: {"mode": "speedJ"|"speedL", "velocity": [v1..v6]}
+                    if isinstance(payload, list) and len(payload) == 6:
+                        cmd = payload
+                        mode = "speedJ"
                         last_received_time = current_time
+                    elif isinstance(payload, dict):
+                        received_mode = str(payload.get("mode", "speedJ"))
+                        received_cmd = payload.get("velocity", payload.get("qdot", payload.get("xdot")))
+
+                        if received_mode in ("speedJ", "speedL") and isinstance(received_cmd, list) and len(received_cmd) == 6:
+                            cmd = received_cmd
+                            mode = received_mode
+                            last_received_time = current_time
+                        else:
+                            print(f"Invalid command packet from {addr}: {payload}")
                     else:
                         print(f"Invalid data format from {addr}: {data}")
             except socket.timeout:
@@ -224,17 +246,25 @@ def _child_main(config: URControllerConfig, stop_event: mp.synchronize.Event) ->
                 pass
 
             # Speed control
-            qdot = [max(q_range[0], min(q_range[1], float(v))) for v in qdot]
+            if mode == "speedL":
+                cmd = [max(tcp_speed_range[0], min(tcp_speed_range[1], float(v))) for v in cmd]
+            else:
+                cmd = [max(q_range[0], min(q_range[1], float(v))) for v in cmd]
+
             try:
-                ok = rtde_c.speedJ(qdot, float(config.acceleration), dt)
-                # Some failures return False and only print: "RTDE control script is not running!"
+                if mode == "speedL":
+                    ok = rtde_c.speedL(cmd, float(config.speedl_acceleration), dt)
+                else:
+                    ok = rtde_c.speedJ(cmd, float(config.acceleration), dt)
+
+                # Some failures return False and only print an RTDE script error.
                 if ok is False:
                     _fatal_rtde_error(
-                        "speedJ returned False (RTDE control script is not running?)",
-                        RuntimeError("speedJ() returned False"),
+                        f"{mode} returned False (RTDE control script is not running?)",
+                        RuntimeError(f"{mode}() returned False"),
                     )
             except Exception as e:
-                _fatal_rtde_error("speedJ failed (connection lost?)", e)
+                _fatal_rtde_error(f"{mode} failed (connection lost?)", e)
 
             # Feedback to active client (UDP issues are non-fatal)
             if active_client is not None:
