@@ -80,7 +80,7 @@ def execute_trajectory(controller, point_list, pointing_vectors, x_directions, d
     
     coeffs_list = multiple_cubic_coeffs(point_list, duration_list, interm_type="zero_velocity")
 
-    controller.init_3d_visualization(point_list, pointing_vectors, x_directions)
+    controller.init_3d_visualization(point_list, pointing_vectors, x_directions, draw_coordinate=True)
     
     last_plot_t = 0.0
 
@@ -109,13 +109,13 @@ def execute_trajectory(controller, point_list, pointing_vectors, x_directions, d
 
             total_v_desired = np.hstack((v_desired, w_desired))
 
-            tcp_pose_est = controller.tcp_pose_estimate(v_desired, w_desired, t)
+            p_est, R_est = controller.tcp_pose_estimate(v_desired, w_desired, t)
 
             controller.speedL(total_v_desired.tolist())
 
             # Refresh visualization at a moderate rate to keep control loop responsive.
             if t - last_plot_t > 0.03:
-                controller.update_3d_trajectory(tcp_pose=tcp_pose_est)
+                controller.update_3d_trajectory()
                 last_plot_t = t
     except KeyboardInterrupt:
         pass
@@ -136,7 +136,7 @@ if __name__ == "__main__":
     [150, 500, 500],
     [150, 500, 500]]) / 1000.0
 
-    pointing_vectors = np.array([[0, 0, -1],
+    pointing_vectors = np.array([[0, 1, 0],
     [0, 1, 0],
     [0, 1, 0],
     [0, 1, 0], 

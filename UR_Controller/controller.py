@@ -239,23 +239,62 @@ class RobotVelocityController:
         if (not hasattr(self, "ax_3d")) or tcp_pos is None or tcp_rot is None:
             return
 
-        pos = np.asarray(tcp_pos, dtype=float)
-        rot = tcp_rot
+        pos = np.asarray(tcp_pos, dtype=float).reshape(-1)
+        rot = np.asarray(tcp_rot, dtype=float)
+
+        if pos.shape[0] < 3 or not np.all(np.isfinite(pos[:3])):
+            print("Warning: skip TCP orientation draw, invalid tcp_pos:", tcp_pos)
+            return
+        if rot.shape != (3, 3) or not np.all(np.isfinite(rot)):
+            print("Warning: skip TCP orientation draw, invalid tcp_rot shape/value.")
+            return
+
+        # Project noisy/near-singular matrix to the nearest proper rotation matrix.
+        try:
+            U, _, Vt = np.linalg.svd(rot)
+            rot = U @ Vt
+            if np.linalg.det(rot) < 0:
+                U[:, -1] *= -1.0
+                rot = U @ Vt
+        except np.linalg.LinAlgError:
+            print("Warning: skip TCP orientation draw, SVD failed for tcp_rot.")
+            return
+
+        axis_norms = np.linalg.norm(rot, axis=0)
+        if not np.all(np.isfinite(axis_norms)) or np.any(axis_norms < 1e-9):
+            print("Warning: skip TCP orientation draw, degenerate rotation axes.")
+            return
+
+        # Keep state definition consistent with the corrected drawable orientation.
+        if hasattr(self, "R_est"):
+            self.R_est = rot.copy()
+
+        colors = ["r", "g", "b"]
+        new_artists = []
+        try:
+            for i in range(3):
+                axis = rot[:, i]
+                q = self.ax_3d.quiver(
+                    pos[0], pos[1], pos[2],
+                    axis[0], axis[1], axis[2],
+                    length=self._tcp_axis_len,
+                    normalize=True,
+                    color=colors[i],
+                    linewidth=2,
+                    alpha=0.9,
+                )
+                new_artists.append(q)
+        except Exception as e:
+            for artist in new_artists:
+                try:
+                    artist.remove()
+                except Exception:
+                    pass
+            print(f"Warning: skip TCP orientation draw, quiver failed: {e}")
+            return
 
         self._clear_tcp_orientation_artists()
-        colors = ["r", "g", "b"]
-        for i in range(3):
-            axis = rot[:, i]
-            q = self.ax_3d.quiver(
-                pos[0], pos[1], pos[2],
-                axis[0], axis[1], axis[2],
-                length=self._tcp_axis_len,
-                normalize=True,
-                color=colors[i],
-                linewidth=2,
-                alpha=0.9,
-            )
-            self._tcp_ori_artists.append(q)
+        self._tcp_ori_artists = new_artists
     
     def rotation_matrix_to_angle_axis(self, R):
         """Convert rotation matrix to angle-axis representation"""
@@ -299,9 +338,9 @@ class RobotVelocityController:
             self.R_est = dR @ self.R_est
         self.last_ctrl_t = t
         self.realtime_path.append(self.p_est.copy())
-        return np.hstack((self.p_est, self.rotation_matrix_to_angle_axis(self.R_est)))
+        return self.p_est, self.R_est
 
-    def init_3d_visualization(self, point_list, pointing_vectors, x_directions, axis_len=0.05):
+    def init_3d_visualization(self, point_list, pointing_vectors, x_directions, axis_len=0.05, draw_coordinate=True):
         plt.ion()
         self.fig_3d = plt.figure(figsize=(9, 7))
         ax = self.fig_3d.add_subplot(111, projection="3d")
@@ -313,13 +352,14 @@ class RobotVelocityController:
         ax.plot(point_list[:, 0], point_list[:, 1], point_list[:, 2], "k--", alpha=0.5, label="Waypoints")
 
         # Draw coordinate frame at each waypoint
-        for i in range(point_list.shape[0]):
-            p = point_list[i, :3]
-            x_axis, y_axis, z_axis = self._frame_from_zx(pointing_vectors[i], x_directions[i])
+        if draw_coordinate:
+            for i in range(point_list.shape[0]):
+                p = point_list[i, :3]
+                x_axis, y_axis, z_axis = self._frame_from_zx(pointing_vectors[i], x_directions[i])
 
-            ax.quiver(p[0], p[1], p[2], x_axis[0], x_axis[1], x_axis[2], length=axis_len, normalize=True, color="r", linewidth=1)
-            ax.quiver(p[0], p[1], p[2], y_axis[0], y_axis[1], y_axis[2], length=axis_len, normalize=True, color="g", linewidth=1)
-            ax.quiver(p[0], p[1], p[2], z_axis[0], z_axis[1], z_axis[2], length=axis_len, normalize=True, color="b", linewidth=1)
+                ax.quiver(p[0], p[1], p[2], x_axis[0], x_axis[1], x_axis[2], length=axis_len, normalize=True, color="r", linewidth=1)
+                ax.quiver(p[0], p[1], p[2], y_axis[0], y_axis[1], y_axis[2], length=axis_len, normalize=True, color="g", linewidth=1)
+                ax.quiver(p[0], p[1], p[2], z_axis[0], z_axis[1], z_axis[2], length=axis_len, normalize=True, color="b", linewidth=1)
 
         # Realtime trajectory line + current point marker
         self.traj_line, = ax.plot([], [], [], "m-", linewidth=2, label="TCP trajectory")
@@ -351,7 +391,7 @@ class RobotVelocityController:
         self.fig_3d.canvas.draw_idle()
         plt.pause(0.001)
 
-    def update_3d_trajectory(self, tcp_pose=None):
+    def update_3d_trajectory(self):
         pts = np.asarray(self.realtime_path)
         self.traj_line.set_data(pts[:, 0], pts[:, 1])
         self.traj_line.set_3d_properties(pts[:, 2])
@@ -359,7 +399,7 @@ class RobotVelocityController:
         self.current_pt.set_3d_properties([pts[-1, 2]])
 
         # Draw current TCP orientation axes (x/y/z) at the current TCP point.
-        self._draw_tcp_orientation(tcp_pose[:3], self._angle_axis_to_rotation_matrix(tcp_pose[3:6]))
+        self._draw_tcp_orientation(self.p_est, self.R_est)
 
         self.fig_3d.canvas.draw_idle()
         plt.pause(0.001)

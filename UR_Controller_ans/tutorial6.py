@@ -4,25 +4,53 @@ import numpy as np
 from tutorial3 import cubic_trajectory, multiple_cubic_coeffs
 
 def rotation_matrix_to_angle_axis(R):
-    """Convert rotation matrix to angle-axis representation"""
+    """
+        Convert a 3x3 rotation matrix to a 3D angle-axis vector.
+
+        Args:
+                R (np.ndarray): Rotation matrix of shape (3, 3).
+
+        Returns:
+                np.ndarray: Angle-axis vector of shape (3,).
+    """
+    # Extract angle from trace: trace(R) = 1 + 2*cos(angle)
     cos_angle = (np.trace(R) - 1) / 2
-    cos_angle = np.clip(cos_angle, -1.0, 1.0)
+    cos_angle = np.clip(cos_angle, -1.0, 1.0)  # Clamp to valid range for arccos
     angle = np.arccos(cos_angle)
     
+    # Handle near-zero rotations to avoid numerical instability
     if angle < 1e-6:
         return np.zeros(3)
     
-    # Calculate rotation axis from rotation matrix
+    # Extract rotation axis from skew-symmetric part of rotation matrix
+    # Uses the property: R - R^T = 2*sin(angle)*[axis]_x
     axis = np.array([
         R[2, 1] - R[1, 2],
         R[0, 2] - R[2, 0],
         R[1, 0] - R[0, 1]
     ]) / (2 * np.sin(angle))
     
+    # Return angle-axis: magnitude = angle, direction = axis
     return angle * axis
 
 def angle_axis_to_rotation_matrix(angle_axis):
-    """Convert angle-axis representation to rotation matrix"""
+    """
+    Convert a 3D angle-axis vector to a 3x3 rotation matrix.
+
+    The input vector encodes axis and angle together:
+    - angle = ||angle_axis||
+    - axis = angle_axis / angle
+
+    Args:
+        angle_axis (np.ndarray): Angle-axis vector of shape (3,).
+
+    Returns:
+        np.ndarray: Rotation matrix of shape (3, 3).
+
+    Notes:
+        If the angle magnitude is very small, this function returns identity
+        to avoid division by nearly zero values.
+    """
     angle = np.linalg.norm(angle_axis)
     
     if angle < 1e-6:
@@ -38,7 +66,26 @@ def angle_axis_to_rotation_matrix(angle_axis):
     return R
 
 def pointing_vector_to_angle_axis(pointing_vector1, pointing_vector2, x_direction1, x_direction2):
-    """Calculate angle-axis representation from pointing vectors and x-directions"""
+    """
+    Compute relative orientation change as angle-axis from two frame definitions.
+
+    Each frame is defined by:
+    - A pointing vector used as local z-axis
+    - An x-direction reference used to build local x-axis after orthogonalization
+
+    The relative rotation from frame 1 to frame 2 is then:
+        R_rel = R2 * R1^T
+    and returned as an angle-axis vector.
+
+    Args:
+        pointing_vector1 (np.ndarray): Frame-1 z-axis, shape (3,).
+        pointing_vector2 (np.ndarray): Frame-2 z-axis, shape (3,).
+        x_direction1 (np.ndarray): Frame-1 x-axis, shape (3,).
+        x_direction2 (np.ndarray): Frame-2 x-axis, shape (3,).
+
+    Returns:
+        np.ndarray: Relative angle-axis vector from frame 1 to frame 2.
+    """
     # Normalize z-axes (pointing vectors)
     z_axis1 = pointing_vector1 / np.linalg.norm(pointing_vector1)
     z_axis2 = pointing_vector2 / np.linalg.norm(pointing_vector2)
@@ -67,10 +114,31 @@ def pointing_vector_to_angle_axis(pointing_vector1, pointing_vector2, x_directio
     return angle_axis
 
 def execute_trajectory(controller, point_list, pointing_vectors, x_directions, duration_list):
+    """
+    Execute Cartesian and orientation trajectory tracking with velocity commands.
 
-    # calculate transformation in angle-axis format for each segment
+    Trajectory state convention in this script:
+    - point_list columns: [x, y, z, s]
+      where s is a scalar progress variable used for orientation interpolation.
+    - target_speed from cubic_trajectory: [vx, vy, vz, ds/dt]
+    - Angular velocity is computed as:
+      w_desired = (ds/dt) * delta_angle_axis
+
+    Args:
+        controller (RobotVelocityController): Active robot velocity controller.
+        point_list (np.ndarray): Waypoints of shape (N, 4), containing
+            Cartesian position in meters and scalar progress s.
+        pointing_vectors (np.ndarray): Orientation z-axis hints for each waypoint,
+            shape (N, 3).
+        x_directions (np.ndarray): Orientation x-axis hints for each waypoint,
+            shape (N, 3).
+        duration_list (list[float]): Cumulative segment end times in seconds,
+            length N-1.
+    """
+    # Calculate transformation in angle-axis format for each segment
     angle_axis_list = []
 
+    # Compute rotation transformations between consecutive waypoint orientations
     for i in range(len(pointing_vectors)-1):
         delta_angle_axis = pointing_vector_to_angle_axis(
             pointing_vectors[i], pointing_vectors[i+1],
@@ -78,44 +146,58 @@ def execute_trajectory(controller, point_list, pointing_vectors, x_directions, d
         )      
         angle_axis_list.append(delta_angle_axis)
     
+    # Generate cubic trajectory coefficients for all segments
     coeffs_list = multiple_cubic_coeffs(point_list, duration_list, interm_type="zero_velocity")
 
-    controller.init_3d_visualization(point_list, pointing_vectors, x_directions)
+    # Initialize 3D visualization with initial waypoints and orientations
+    controller.init_3d_visualization(point_list, pointing_vectors, x_directions, draw_coordinate=True)
     
+    # Track last visualization update time
     last_plot_t = 0.0
 
+    # Record start time and execute trajectory loop
     start_t = time.time()
     try:
         while time.time() - start_t < duration_list[-1]:
+            # Get elapsed time since trajectory start
             t = time.time() - start_t
             stage = 0
             stage_t = t
             stage_duration = duration_list[0]
+            
+            # Determine which trajectory segment we are currently in
             for i in range(len(duration_list)):
                 if t < duration_list[i]:
                     stage = i
                     break
+            
+            # Calculate time within current segment
             if stage > 0:
                 stage_t -= duration_list[stage-1]
                 stage_duration = duration_list[stage] - duration_list[stage-1]
 
+            # Get cubic trajectory and velocity at current time
             cubic_coeffs = coeffs_list[stage]
             target_pos, target_speed = cubic_trajectory(cubic_coeffs, stage_t)
 
+            # Compute desired angular velocity from rotation rate and angle-axis representation
             w_desired = target_speed[3] * angle_axis_list[stage]
-            # print("w_desired:", w_desired)
 
+            # Extract desired linear velocity from trajectory
             v_desired = target_speed[:3]
 
+            # Combine linear and angular velocities
             total_v_desired = np.hstack((v_desired, w_desired))
 
-            tcp_pose_est = controller.tcp_pose_estimate(v_desired, w_desired, t)
+            # Estimate TCP pose based on velocities
+            p_est, R_est = controller.tcp_pose_estimate(v_desired, w_desired, t)
 
+            # Send velocity command to robot
             controller.speedL(total_v_desired.tolist())
 
-            # Refresh visualization at a moderate rate to keep control loop responsive.
+            # Refresh visualization at a moderate rate to keep control loop responsive
             if t - last_plot_t > 0.03:
-                controller.update_3d_trajectory(tcp_pose=tcp_pose_est)
+                controller.update_3d_trajectory()
                 last_plot_t = t
     except KeyboardInterrupt:
         pass
@@ -147,7 +229,7 @@ if __name__ == "__main__":
     # Define x-directions for each waypoint
     x_directions = np.array([[1, 0, 0],
     [1, 0, 0],
-    [1, 0, 0],
+    [0, 0, -1],
     [1, 0, 0],
     [1, 0, 0],
     [1, 0, 0],
