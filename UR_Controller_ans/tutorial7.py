@@ -63,10 +63,11 @@ def translation_matrix_z(z):
         [0, 0, 0, 1]
     ])
 
-def forward_kinematics(q, alpha, a, d):
+def forward_kinematics(q, alpha, a, theta, d):
     q_modified = q.copy()
-    q_modified[0] += np.pi
-    q_modified[3] += np.pi
+    q_modified[1] += np.pi/2
+    q_modified[3] += np.pi/2
+    q_modified += np.array(theta)
     
     T = np.eye(4)
     
@@ -83,26 +84,27 @@ if __name__ == "__main__":
     a = [0, 0, 0.24365, 0.21325, 0, 0]
     d = [0.1519, 0, 0, 0.11235, 0.08535, 0.0819]
     alpha = [0, -np.pi/2, 0, 0, np.pi/2, -np.pi/2]
+    theta = [np.pi, -np.pi/2, 0, np.pi/2, 0, 0]
 
     q1 = np.array([100, 20, 20, 30, 40, 50])
     q1 = np.deg2rad(q1)
-    T1 = forward_kinematics(q1, alpha, a, d)
+    T1 = forward_kinematics(q1, alpha, a, theta, d)
 
     q2 = np.array([120, 40, 40, 50, 60, 70])
     q2 = np.deg2rad(q2)
-    T2 = forward_kinematics(q2, alpha, a, d)
+    T2 = forward_kinematics(q2, alpha, a, theta, d)
 
     q3 = np.array([140, 60, 60, 70, 80, 90])
     q3 = np.deg2rad(q3)
-    T3 = forward_kinematics(q3, alpha, a, d)
+    T3 = forward_kinematics(q3, alpha, a, theta, d)
 
     q4 = np.array([0,0,0,0,0,0])
     q4 = np.deg2rad(q4)
-    T4 = forward_kinematics(q4, alpha, a, d)
+    T4 = forward_kinematics(q4, alpha, a, theta, d)
 
     q5 = np.array([0, -90, 0, -90, 0, 0])
     q5 = np.deg2rad(q5)
-    T5 = forward_kinematics(q5, alpha, a, d)
+    T5 = forward_kinematics(q5, alpha, a, theta, d)
 
     # Check the results against the correct transformation matrices
 
