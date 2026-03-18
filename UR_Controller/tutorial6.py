@@ -207,7 +207,7 @@ def execute_trajectory(controller, point_list, pointing_vectors, x_directions, d
 
 if __name__ == "__main__":
 
-    controller = RobotVelocityController()
+    controller = RobotVelocityController(server_ip="127.0.0.1", direct_connect=True)
     controller.start()
 
     point_list = np.array([[150, 500, 500],
